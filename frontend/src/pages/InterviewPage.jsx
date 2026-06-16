@@ -852,6 +852,7 @@ export default function InterviewPage({ sessionData, onComplete }) {
   // ── Core webcam starter (all-in-one, robust) ─────────────────
   async function startWebcamWithId(deviceId) {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      console.error("[Camera] API not supported. This requires HTTPS or localhost.")
       setCameraError(true)
       return
     }
@@ -874,16 +875,21 @@ export default function InterviewPage({ sessionData, onComplete }) {
     try {
       const videoConstraints = deviceId
         ? { deviceId: { exact: deviceId }, width: { ideal: 320 }, height: { ideal: 240 } }
-        : { width: { ideal: 320 }, height: { ideal: 240 } }
+        : { facingMode: "user", width: { ideal: 320 }, height: { ideal: 240 } }
       stream = await tryConstraints({ video: videoConstraints, audio: false })
     } catch (e1) {
-      console.warn("[Camera] Ideal constraints failed, trying bare video:true", e1)
+      console.warn("[Camera] Ideal constraints failed, trying facingMode only", e1)
       try {
-        stream = await tryConstraints({ video: true, audio: false })
+        stream = await tryConstraints({ video: { facingMode: "user" }, audio: false })
       } catch (e2) {
-        console.error("[Camera] All attempts failed:", e2)
-        setCameraError(true)
-        return
+        console.warn("[Camera] facingMode failed, trying bare video:true", e2)
+        try {
+          stream = await tryConstraints({ video: true, audio: false })
+        } catch (e3) {
+          console.error("[Camera] All attempts failed:", e3)
+          setCameraError(true)
+          return
+        }
       }
     }
 
