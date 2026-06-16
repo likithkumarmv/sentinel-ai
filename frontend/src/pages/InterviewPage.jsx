@@ -45,6 +45,7 @@ export default function InterviewPage({ sessionData, onComplete }) {
   const [isTranscribing, setIsTranscribing] = useState(false) // tracks if Whisper is currently running
   const [micPermission, setMicPermission] = useState("pending") // "pending" | "granted" | "denied"
   const [screenExitCount, setScreenExitCount] = useState(0)
+  const [answerMode, setAnswerMode] = useState(null) // null | "speak" | "type"
 
   // ── 60s Countdown Timer ─────────────────────────────
   const [countdown, setCountdown] = useState(QUESTION_TIME_LIMIT)
@@ -1376,9 +1377,9 @@ export default function InterviewPage({ sessionData, onComplete }) {
     // Reset per-question counters for new question
     perQBlinkRef.current = 0
     perQGazeRef.current = 0
+    setAnswerMode(null)
     await speakWithSub(q.text, "architect")
     startCountdown()
-    await startRec()
   }
 
   async function requestMicPermission() {
@@ -1406,10 +1407,9 @@ export default function InterviewPage({ sessionData, onComplete }) {
     // ── PERSIST SESSION TO LOCALSTORAGE ──
     clearSession()
     initSession(sessionData)
-    cancelTTS(); setSubtitle(null); setPhase("questioning")
+    cancelTTS(); setSubtitle(null); setPhase("questioning"); setAnswerMode(null)
     if (currentQ?.text) await speakWithSub(currentQ.text, "architect")
     startCountdown()
-    await startRec()
   }
 
   async function endInterview() {
@@ -1942,7 +1942,25 @@ export default function InterviewPage({ sessionData, onComplete }) {
             </div>
           )}
 
-          {phase === "questioning" && (
+          {phase === "questioning" && answerMode === null && (
+            <div className="rec-strip" style={{ alignItems: "center", padding: "20px 14px", gap: "10px" }}>
+              <span className="mono dim" style={{ fontSize: "0.65rem", letterSpacing: "0.1em", marginBottom: "8px" }}>CHOOSE RESPONSE METHOD</span>
+              <div style={{ display: "flex", gap: "10px", width: "100%" }}>
+                <button className="btn btn-ghost" style={{ flex: 1, padding: "16px", fontSize: "0.9rem", display: "flex", flexDirection: "column", alignItems: "center", gap: "8px" }}
+                  onClick={() => { setAnswerMode("speak"); startRec() }}>
+                  <span style={{ fontSize: "1.5rem" }}>🎤</span>
+                  <span style={{ fontFamily: "var(--f-mono)", letterSpacing: "0.05em" }}>SPEAK (VOICE)</span>
+                </button>
+                <button className="btn btn-ghost" style={{ flex: 1, padding: "16px", fontSize: "0.9rem", display: "flex", flexDirection: "column", alignItems: "center", gap: "8px" }}
+                  onClick={() => { setAnswerMode("type"); }}>
+                  <span style={{ fontSize: "1.5rem" }}>⌨️</span>
+                  <span style={{ fontFamily: "var(--f-mono)", letterSpacing: "0.05em" }}>TYPE (KEYBOARD)</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {phase === "questioning" && answerMode !== null && (
             <div className="rec-strip">
               <div className="rec-strip-head">
                 <span className="mono" style={{ fontSize: "0.55rem", color: "var(--t3)", letterSpacing: "0.1em" }}>YOUR RESPONSE</span>
@@ -1964,16 +1982,18 @@ export default function InterviewPage({ sessionData, onComplete }) {
                   value={transcript}
                   onChange={e => setTranscript(e.target.value)}
                   onFocus={() => { if (isRec) handleStopRec() }}
-                  placeholder={isRec ? "Speak now... (Live subtitles enabled)" : "Press REC to speak or just type your answer here"}
+                  placeholder={answerMode === "speak" ? (isRec ? "Speak now... (Live subtitles enabled)" : "Press REC to speak or type here") : "Type your answer here..."}
                   disabled={loading}
                 />
                 {isRec && <span className="cursor-blink">█</span>}
               </div>
               <div className="rec-controls">
-                {!isRec
-                  ? <button className="btn btn-ghost" style={{ flex: 1, fontSize: "0.8rem" }} onClick={startRec}>● REC</button>
-                  : <button className="btn btn-blood" style={{ flex: 1, fontSize: "0.8rem" }} onClick={handleStopRec}>■ STOP</button>}
-                <button className="btn btn-acid" style={{ flex: 2, fontSize: "0.8rem" }} onClick={() => submitAnswer(false)}
+                {answerMode === "speak" && (
+                  !isRec
+                    ? <button className="btn btn-ghost" style={{ flex: 1, fontSize: "0.8rem" }} onClick={startRec}>● REC</button>
+                    : <button className="btn btn-blood" style={{ flex: 1, fontSize: "0.8rem" }} onClick={handleStopRec}>■ STOP</button>
+                )}
+                <button className="btn btn-acid" style={{ flex: answerMode === "speak" ? 2 : 1, fontSize: "0.8rem" }} onClick={() => submitAnswer(false)}
                   disabled={loading || isTranscribing || (!hasRecorded && !isRec && transcript.trim().length === 0)}>
                   {loading ? "EVALUATING..." : isTranscribing ? "TRANSCRIBING..." : "SUBMIT →"}
                 </button>
