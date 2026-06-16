@@ -2,10 +2,10 @@ fastapi>=0.111.0
 starlette>=0.37.2
 uvicorn[standard]>=0.29.0
 python-multipart>=0.0.9
-websockets>=12.0
+websockets>=13.0
 sqlalchemy>=2.0.30
 groq>=0.9.0
-httpx<0.28.0
+httpx>=0.28.1
 python-dotenv>=1.0.1
 pydantic>=2.9.0
 numpy
