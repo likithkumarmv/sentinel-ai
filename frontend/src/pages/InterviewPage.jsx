@@ -31,6 +31,7 @@ export default function InterviewPage({ sessionData, onComplete }) {
   const [isRec, setIsRec] = useState(false)
   const [loading, setLoading] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
+  const [isPortrait, setIsPortrait] = useState(false)
   const [videoDevices, setVideoDevices] = useState([])
   const [selectedCamera, setSelectedCamera] = useState("")
   const [elapsed, setElapsed] = useState(0)
@@ -88,6 +89,7 @@ export default function InterviewPage({ sessionData, onComplete }) {
   const mimeTypeRef = useRef("audio/webm") // stored at record time so it survives stopRec
   const transcriptRef = useRef("") // always-fresh transcript value
   const kinematicFramesRef = useRef([])
+  const detectionImageSizeRef = useRef({ w: 320, h: 240 }) // track size of image sent to YOLO
   const detectedObjectsRef = useRef([])
   const screenExitLogRef = useRef([]) // {t, questionIndex, type: 'tab'|'blur'}
   const screenExitCountRef = useRef(0)
@@ -485,31 +487,47 @@ export default function InterviewPage({ sessionData, onComplete }) {
       ctx.fill()
     }
 
-    // Draw Object Detections (RF-DETR)
+    // Draw Object Detections (YOLO)
     const detections = detectedObjectsRef.current || []
-    ctx.lineWidth = 2
-    ctx.font = "12px monospace"
-    for (const d of detections) {
-      const [orig_xmin, ymin, orig_xmax, ymax] = d.bbox
-      // Mirror the bounding box because canvas renders unmirrored but video is mirrored
-      const xmin = canvas.width - orig_xmax
-      const xmax = canvas.width - orig_xmin
-      const w = xmax - xmin
-      const h = ymax - ymin
-      
-      // Draw box
-      ctx.strokeStyle = "rgba(255, 0, 85, 0.8)"
-      ctx.strokeRect(xmin, ymin, w, h)
-      
-      // Draw label
-      const text = `${d.label.toUpperCase()} ${(d.confidence*100).toFixed(0)}%`
-      const tw = ctx.measureText(text).width
-      ctx.fillStyle = "rgba(255, 0, 85, 0.8)"
-      ctx.fillRect(xmin, ymin - 16, tw + 8, 16)
-      
-      ctx.fillStyle = "#fff"
-      ctx.textAlign = "left"
-      ctx.fillText(text, xmin + 4, ymin - 4)
+    if (detections.length > 0) {
+      ctx.lineWidth = 2
+      ctx.font = "12px monospace"
+      // Scale bboxes from detection image size to canvas size
+      const scaleX = canvas.width / (detectionImageSizeRef.current.w || canvas.width)
+      const scaleY = canvas.height / (detectionImageSizeRef.current.h || canvas.height)
+      for (const d of detections) {
+        const [orig_xmin, orig_ymin, orig_xmax, orig_ymax] = d.bbox
+        // Scale from detection image space to canvas space
+        const scaled_xmin = orig_xmin * scaleX
+        const scaled_ymin = orig_ymin * scaleY
+        const scaled_xmax = orig_xmax * scaleX
+        const scaled_ymax = orig_ymax * scaleY
+        // Mirror the bounding box because canvas renders unmirrored but video is CSS mirrored
+        const xmin = canvas.width - scaled_xmax
+        const xmax = canvas.width - scaled_xmin
+        const ymin = scaled_ymin
+        const ymax = scaled_ymax
+        const w = xmax - xmin
+        const h = ymax - ymin
+        
+        // Draw box with glow effect
+        ctx.strokeStyle = "rgba(255, 0, 85, 0.9)"
+        ctx.shadowColor = "rgba(255, 0, 85, 0.4)"
+        ctx.shadowBlur = 6
+        ctx.strokeRect(xmin, ymin, w, h)
+        ctx.shadowBlur = 0
+        
+        // Draw label background
+        const text = `${d.label.toUpperCase()} ${(d.confidence*100).toFixed(0)}%`
+        const tw = ctx.measureText(text).width
+        ctx.fillStyle = "rgba(255, 0, 85, 0.85)"
+        ctx.fillRect(xmin, ymin - 16, tw + 8, 16)
+        
+        // Draw label text
+        ctx.fillStyle = "#fff"
+        ctx.textAlign = "left"
+        ctx.fillText(text, xmin + 4, ymin - 4)
+      }
     }
 
     // Calculate sitting angle via posture tracker hook (handles throttling + telemetry)
@@ -683,8 +701,12 @@ export default function InterviewPage({ sessionData, onComplete }) {
       if (!videoRef.current || videoRef.current.readyState < 2) return
       const video = videoRef.current
       const oc = document.createElement("canvas")
-      oc.width = video.videoWidth || 320
-      oc.height = video.videoHeight || 240
+      const captureW = video.videoWidth || 320
+      const captureH = video.videoHeight || 240
+      oc.width = captureW
+      oc.height = captureH
+      // Track the size of the image sent to YOLO for bbox coordinate mapping
+      detectionImageSizeRef.current = { w: captureW, h: captureH }
       const ctx = oc.getContext("2d")
       ctx.drawImage(video, 0, 0, oc.width, oc.height)
       oc.toBlob(async (blob) => {
@@ -694,9 +716,20 @@ export default function InterviewPage({ sessionData, onComplete }) {
         try {
           const res = await axios.post("/api/detection/analyze_frame", fd)
           if (res.data && res.data.success) {
-            detectedObjectsRef.current = res.data.detections || []
+            const newDetections = res.data.detections || []
+            detectedObjectsRef.current = newDetections
+            if (newDetections.length > 0) {
+              console.log(`[Detection] Found ${newDetections.length} object(s):`, newDetections.map(d => `${d.label} (${(d.confidence*100).toFixed(0)}%)`).join(", "))
+            }
           }
-        } catch (e) { }
+        } catch (e) {
+          // Backend not available (e.g. deployed on Vercel without backend)
+          // Silently disable further detection attempts after repeated failures
+          if (e.response?.status === 404 || e.code === "ERR_NETWORK") {
+            console.warn("[Detection] Backend not available, object detection disabled")
+            clearInterval(detInterval)
+          }
+        }
       }, "image/jpeg", 0.7)
     }
     const detInterval = setInterval(captureFrame, 1500)
@@ -727,11 +760,31 @@ export default function InterviewPage({ sessionData, onComplete }) {
     document.addEventListener("visibilitychange", handleVisibilityChange)
     window.addEventListener("blur", handleWindowBlur)
 
+    // ── PORTRAIT DETECTION FOR MOBILE ─────────────────
+    const checkOrientation = () => {
+      const isMobile = window.innerWidth < 1024 || ('ontouchstart' in window)
+      const portrait = isMobile && window.innerHeight > window.innerWidth
+      setIsPortrait(portrait)
+    }
+    checkOrientation()
+    window.addEventListener("resize", checkOrientation)
+    window.addEventListener("orientationchange", () => setTimeout(checkOrientation, 100))
+
+    // Try to lock screen orientation to landscape (requires fullscreen on Android)
+    try {
+      if (screen.orientation && screen.orientation.lock) {
+        screen.orientation.lock("landscape").catch(() => {
+          // Orientation lock not supported or requires fullscreen — portrait overlay handles it
+        })
+      }
+    } catch (e) { /* Orientation API not available */ }
+
     return () => {
       stopWebcam()
       clearInterval(timerRef.current)
       clearInterval(detInterval)
       navigator.mediaDevices?.removeEventListener("devicechange", onDeviceChange)
+      window.removeEventListener("resize", checkOrientation)
       document.removeEventListener("visibilitychange", handleVisibilityChange)
       window.removeEventListener("blur", handleWindowBlur)
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current)
@@ -1492,6 +1545,21 @@ export default function InterviewPage({ sessionData, onComplete }) {
   // ── MAIN RENDER ────────────────────────────────────
   return (
     <div className="iv-root">
+      {/* ── PORTRAIT ROTATION OVERLAY ── */}
+      {isPortrait && (
+        <div className="portrait-overlay">
+          <div className="portrait-content">
+            <div className="portrait-icon">📱↻</div>
+            <h2 className="display acid" style={{ fontSize: "1.6rem", letterSpacing: "0.1em", marginBottom: "8px" }}>ROTATE YOUR DEVICE</h2>
+            <p className="mono dim" style={{ fontSize: "0.7rem", letterSpacing: "0.08em", lineHeight: 1.6, maxWidth: "280px", textAlign: "center" }}>
+              SENTINEL<span className="acid">AI</span> BOARDROOM requires landscape mode for the optimal interview experience.
+            </p>
+            <div className="portrait-rotate-anim">
+              <div className="phone-outline portrait-phone" />
+            </div>
+          </div>
+        </div>
+      )}
       <BoardroomScene />
 
       <div className="iv-overlay">

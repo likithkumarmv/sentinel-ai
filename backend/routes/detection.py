@@ -45,12 +45,26 @@ async def analyze_frame(file: UploadFile = File(...)):
             
         result = results_list[0]
         
+        # Objects relevant in an interview context (potential cheating/distraction indicators)
+        # Exclude 'person' since the candidate is always visible
+        RELEVANT_OBJECTS = {
+            "cell phone", "book", "laptop", "remote", "tablet",
+            "keyboard", "mouse", "tv", "monitor", "bottle",
+            "cup", "scissors", "knife", "handbag", "backpack",
+            "cat", "dog",  # pets entering frame
+        }
+        
         # format results
         results = []
         for box in result.boxes:
             class_id = int(box.cls[0].item())
             label = result.names[class_id]
             confidence = float(box.conf[0].item())
+            
+            # Only include relevant objects
+            if label.lower() not in RELEVANT_OBJECTS:
+                continue
+                
             bbox = box.xyxy[0].tolist() # [x_min, y_min, x_max, y_max]
             
             results.append({
