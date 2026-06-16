@@ -1,0 +1,7 @@
+# Optional ML packages for local object detection
+# Install with: pip install -r requirements-ml.txt
+# These are NOT needed for the core interview system.
+
+ultralytics
+supervision
+opencv-python-headless

@@ -9,10 +9,13 @@ httpx<0.28.0
 python-dotenv==1.0.1
 pydantic==2.7.1
 numpy==1.26.4
-ultralytics
-supervision
-opencv-python-headless
 Pillow
 google-genai
 edge-tts
 pydub
+
+# ── Optional: Object Detection (local dev only) ──────
+# These packages pull in PyTorch (~2GB) and will fail
+# on memory-constrained hosts like Render free tier.
+# Install locally with: pip install -r requirements-ml.txt
+# The detection route handles missing imports gracefully.
